@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="البيت الأبيض للألبان — متجر إلكتروني لمنتجات الألبان الطازجة مع سلة وطلبات وتوصيل ضمن دمشق وريفها." />
+    <meta name="robots" content="index,follow" />
+    <meta name="theme-color" content="#2D5A27" />
+    <title>البيت الأبيض للألبان</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Font: Tajawal -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- React 18 & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <!-- Babel for React JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: '#2D5A27',
+              accent: '#D4AF37',
+              secondary: '#F1E8D9',
+              background: '#F9F7F2',
+              foreground: '#1D2A1C',
+              border: '#DCD2C1',
+              muted: '#5A6B59',
+            },
+            fontFamily: {
+              body: ['Tajawal', 'sans-serif'],
+              heading: ['Tajawal', 'sans-serif'],
+            }
+          }
+        }
+      }
+    </script>
+
+    <style>
+      * { font-family: 'Tajawal', sans-serif; }
+      html { scroll-behavior: smooth; }
+      body { direction: rtl; background: #F9F7F2; color: #1D2A1C; }
+      h1, h2, h3, h4, h5, h6 { font-weight: 900; }
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: #F1E8D9; }
+      ::-webkit-scrollbar-thumb { background: rgba(45, 90, 39, 0.4); border-radius: 9999px; }
+      ::selection { background: rgba(212, 175, 55, 0.3); color: #2D5A27; }
+    </style>
+</head>
+<body>
+
+    <div id="root"></div>
+
+    <script type="text/text/babel">
+      const { useState, useMemo, useEffect } = React;
+
+      /* ============ Storage & Helper Functions ============ */
+      const DB_KEY = 'white_dairy_db_v2';
+      const CART_KEY = 'white_dairy_cart_v2';
+
+      const defaultProducts = [
+        {
+          id: 'p1',
+          name: 'لبنة بلدية إكسترا',
+          category: 'لبنة',
+          price: 25000,
+          unit: 'كغ',
+          description: 'لبنة مصفاة من حليب بقر طازج 100% بدون أي إضافات حافظة.',
+          image: 'https://images.unsplash.com/photo-1528751014936-863e6e7a319c?w=500&q=80',
+          available: true
+        },
+        {
+          id: 'p2',
+          name: 'جبنة بلدية مشللة',
+          category: 'أجبان',
+          price: 45000,
+          unit: 'كغ',
+          description: 'جبنة بلدية طازجة قليلة الملح، مصنوعة يدوياً.',
+          image: 'https://images.unsplash.com/photo-1486297678162-eb2a19b0a32d?w=500&q=80',
+          available: true
+        },
+        {
+          id: 'p3',
+          name: 'حليب بقر طازج',
+          category: 'حليب',
+          price: 10000,
+          unit: 'ليتر',
+          description: 'حليب كامل الدسم طازج يومياً من المزرعة مباشرة.',
+          image: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=500&q=80',
+          available: true
+        },
+        {
+          id: 'p4',
+          name: 'لبن رائب (زبادي)',
+          category: 'ألبان',
+          price: 12000,
+          unit: 'كغ',
+          description: 'لبن رائب سميك القوام وطبيعي 100%.',
+          image: 'https://images.unsplash.com/photo-1571212515416-fef01fc43637?w=500&q=80',
+          available: true
+        }
+      ];
+
+      const loadDB = () => {
+        try {
+          const raw = localStorage.getItem(DB_KEY);
+          const parsed = raw ? JSON.parse(raw) : {};
+          return {
+            products: parsed.products && parsed.products.length ? parsed.products : defaultProducts,
+            orders: parsed.orders || [],
+            settings: { adminUsername: 'admin', adminPassword: '123' }
+          };
+        } catch {
+          return { products: defaultProducts, orders: [], settings: { adminUsername: 'admin', adminPassword: '123' } };
+        }
+      };
+
+      const saveDB = (db) => {
+        try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch {}
+      };
+
+      /* ============ Icon Component ============ */
+      const Icon = ({ name, size = 20, className = "" }) => {
+        const ref = React.useRef(null);
+        useEffect(() => {
+          if (ref.current && window.lucide && window.lucide.icons[name]) {
+            ref.current.innerHTML = '';
+            const svg = window.lucide.createElement(window.lucide.icons[name]);
+            svg.setAttribute('width', size);
+            svg.setAttribute('height', size);
+            if (className) svg.setAttribute('class', className);
+            ref.current.appendChild(svg);
+          }
+        }, [name, size, className]);
+        return <span ref={ref} className="inline-flex items-center justify-center"></span>;
+      };
+
+      /* ============ Main Application Component ============ */
+      function App() {
+        const [db, setDb] = useState(loadDB);
+        const [cart, setCart] = useState([]);
+        const [view, setView] = useState('shop'); // 'shop', 'cart', 'admin'
+        const [category, setCategory] = useState('الكل');
+        const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+
+        // Admin Credentials State
+        const [loginUser, setLoginUser] = useState('');
+        const [loginPass, setLoginPass] = useState('');
+
+        // Checkout Form State
+        const [customerName, setCustomerName] = useState('');
+        const [customerPhone, setCustomerPhone] = useState('');
+        const [customerAddress, setCustomerAddress] = useState('');
+
+        useEffect(() => { saveDB(db); }, [db]);
+
+        const addToCart = (product) => {
+          setCart(prev => {
+            const existing = prev.find(item => item.id === product.id);
+            if (existing) {
+              return prev.map(item => item.id === product.id ? { ...item, qty: item.qty + 1 } : item);
+            }
+            return [...prev, { ...product, qty: 1 }];
+          });
+        };
+
+        const updateCartQty = (id, delta) => {
+          setCart(prev => prev.map(item => {
+            if (item.id === id) {
+              const newQty = item.qty + delta;
+              return newQty > 0 ? { ...item, qty: newQty } : null;
+            }
+            return item;
+          }).filter(Boolean));
+        };
+
+        const cartTotal = useMemo(() => {
+          return cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+        }, [cart]);
+
+        const handlePlaceOrder = (e) => {
+          e.preventDefault();
+          if (!cart.length) return alert('السلة فارغة!');
+          if (!customerName || !customerPhone || !customerAddress) {
+            return alert('يرجى تعبئة جميع بيانات التوصيل.');
+          }
+
+          const newOrder = {
+            id: 'ORD-' + Date.now().toString().slice(-6),
+            customer: customerName,
+            phone: customerPhone,
+            address: customerAddress,
+            items: cart,
+            total: cartTotal,
+            date: new Date().toLocaleString('ar-SY'),
+            status: 'جديد'
+          };
+
+          setDb(prev => ({ ...prev, orders: [newOrder, ...prev.orders] }));
+          setCart([]);
+          alert('تم إرسال طلبك بنجاح! سنتواصل معك قريباً لتأكيد التوصيل.');
+          setView('shop');
+        };
+
+        const categories = ['الكل', ...new Set(db.products.map(p => p.category))];
+        const filteredProducts = category === 'الكل' 
+          ? db.products 
+          : db.products.filter(p => p.category === category);
+
+        return (
+          <div className="min-h-screen flex flex-col">
+            {/* Header */}
+            <header className="bg-primary text-white sticky top-0 z-50 shadow-md">
+              <div className="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
+                <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('shop')}>
+                  <Icon name="Store" size={28} className="text-accent" />
+                  <h1 className="text-xl font-black">البيت الأبيض للألبان</h1>
+                </div>
+
+                <nav className="flex items-center gap-4">
+                  <button onClick={() => setView('shop')} className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-bold ${view === 'shop' ? 'bg-white/20' : ''}`}>
+                    <Icon name="ShoppingBag" size={18} /> المتجر
+                  </button>
+                  <button onClick={() => setView('cart')} className={`relative px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-bold ${view === 'cart' ? 'bg-white/20' : ''}`}>
+                    <Icon name="ShoppingCart" size={18} /> السلة
+                    {cart.length > 0 && (
+                      <span className="bg-accent text-primary text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                        {cart.reduce((a, b) => a + b.qty, 0)}
+                      </span>
+                    )}
+                  </button>
+                  <button onClick={() => setView('admin')} className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-bold ${view === 'admin' ? 'bg-white/20' : ''}`}>
+                    <Icon name="UserCheck" size={18} /> الإدارة
+                  </button>
+                </nav>
+              </div>
+            </header>
+
+            {/* Content Area */}
+            <main className="flex-1 max-w-6xl w-full mx-auto p-4">
+              
+              {/* SHOP VIEW */}
+              {view === 'shop' && (
+                <div>
+                  {/* Hero Banner */}
+                  <div className="bg-secondary p-6 rounded-2xl mb-6 text-center border border-border shadow-sm">
+                    <h2 className="text-2xl font-black text-primary mb-2">منتجات ألبان طازجة يومياً</h2>
+                    <p className="text-muted">من المزرعة مباشرة إلى مائدتك بأعلى معايير الجودة والنظافة</p>
+                  </div>
+
+                  {/* Categories */}
+                  <div className="flex gap-2 overflow-x-auto pb-4 mb-6">
+                    {categories.map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setCategory(cat)}
+                        className={`px-4 py-2 rounded-full font-bold whitespace-nowrap transition-all ${category === cat ? 'bg-primary text-white' : 'bg-white text-foreground border border-border'}`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Products Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                    {filteredProducts.map(p => (
+                      <div key={p.id} className="bg-white rounded-2xl shadow-sm border border-border overflow-hidden flex flex-col justify-between">
+                        <img src={p.image} alt={p.name} className="w-full h-48 object-cover" />
+                        <div className="p-4 flex-1 flex flex-col justify-between">
+                          <div>
+                            <span className="text-xs bg-secondary text-primary px-2 py-1 rounded font-bold">{p.category}</span>
+                            <h3 className="text-lg font-bold mt-2">{p.name}</h3>
+                            <p className="text-sm text-muted mt-1">{p.description}</p>
+                          </div>
+                          <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between">
+                            <span className="text-lg font-black text-primary">{p.price.toLocaleString()} ل.س <span className="text-xs text-muted font-normal">/ {p.unit}</span></span>
+                            <button
+                              onClick={() => addToCart(p)}
+                              className="bg-accent text-primary font-bold px-3 py-2 rounded-xl flex items-center gap-1 hover:brightness-95 transition-all"
+                            >
+                              <Icon name="Plus" size={16} /> إضافة
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* CART VIEW */}
+              {view === 'cart' && (
+                <div className="max-w-2xl mx-auto">
+                  <h2 className="text-2xl font-black mb-6 flex items-center gap-2">
+                    <Icon name="ShoppingCart" /> سلة المشتريات
+                  </h2>
+
+                  {cart.length === 0 ? (
+                    <div className="bg-white p-8 rounded-2xl text-center border border-border shadow-sm">
+                      <p className="text-muted text-lg mb-4">السلة فارغة حالياً</p>
+                      <button onClick={() => setView('shop')} className="bg-primary text-white font-bold px-6 py-2 rounded-xl">
+                        تصفح المنتجات
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="bg-white rounded-2xl border border-border p-4 shadow-sm divide-y">
+                        {cart.map(item => (
+                          <div key={item.id} className="py-3 flex items-center justify-between">
+                            <div>
+                              <h4 className="font-bold">{item.name}</h4>
+                              <p className="text-sm text-muted">{item.price.toLocaleString()} ل.س / {item.unit}</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <div className="flex items-center border border-border rounded-lg">
+                                <button onClick={() => updateCartQty(item.id, -1)} className="px-2 py-1 text-lg font-bold">-</button>
+                                <span className="px-3 font-bold">{item.qty}</span>
+                                <button onClick={() => updateCartQty(item.id, 1)} className="px-2 py-1 text-lg font-bold">+</button>
+                              </div>
+                              <span className="font-bold text-primary min-w-[80px] text-left">{(item.price * item.qty).toLocaleString()} ل.س</span>
+                            </div>
+                          </div>
+                        ))}
+                        <div className="pt-4 flex justify-between items-center text-xl font-black">
+                          <span>المجموع الإجمالي:</span>
+                          <span className="text-primary">{cartTotal.toLocaleString()} ل.س</span>
+                        </div>
+                      </div>
+
+                      {/* Checkout Form */}
+                      <form onSubmit={handlePlaceOrder} className="bg-white rounded-2xl border border-border p-6 shadow-sm space-y-4">
+                        <h3 className="text-lg font-black border-b pb-2">بيانات التوصيل</h3>
+                        <div>
+                          <label className="block text-sm font-bold mb-1">الاسم الكامل</label>
+                          <input required type="text" value={customerName} onChange={e => setCustomerName(e.target.value)} className="w-full p-2.5 border border-border rounded-xl" placeholder="أدخل اسمك" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold mb-1">رقم الهاتف</label>
+                          <input required type="tel" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} className="w-full p-2.5 border border-border rounded-xl" placeholder="09xxxxxxx" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold mb-1">العنوان بالتفصيل</label>
+                          <textarea required value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} className="w-full p-2.5 border border-border rounded-xl" rows="3" placeholder="المنطقة، الشارع، البناء..."></textarea>
+                        </div>
+                        <button type="submit" className="w-full bg-primary text-white font-bold py-3 rounded-xl shadow hover:bg-opacity-95">
+                          تأكيد وإرسال الطلب
+                        </button>
+                      </form>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ADMIN VIEW */}
+              {view === 'admin' && (
+                <div>
+                  {!isAdminLoggedIn ? (
+                    <div className="max-w-md mx-auto bg-white p-6 rounded-2xl border border-border shadow-sm">
+                      <h2 className="text-xl font-black mb-4 text-center">تسجيل دخول الإدارة</h2>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-bold mb-1">اسم المستخدم</label>
+                          <input type="text" value={loginUser} onChange={e => setLoginUser(e.target.value)} className="w-full p-2.5 border border-border rounded-xl" placeholder="admin" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-bold mb-1">كلمة المرور</label>
+                          <input type="password" value={loginPass} onChange={e => setLoginPass(e.target.value)} className="w-full p-2.5 border border-border rounded-xl" placeholder="123" />
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (loginUser === db.settings.adminUsername && loginPass === db.settings.adminPassword) {
+                              setIsAdminLoggedIn(true);
+                            } else {
+                              alert('بيانات الدخول غير صحيحة');
+                            }
+                          }}
+                          className="w-full bg-primary text-white font-bold py-2.5 rounded-xl"
+                        >
+                          دخول
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="flex justify-between items-center">
+                        <h2 className="text-2xl font-black">لوحة التحكم والطلبات</h2>
+                        <button onClick={() => setIsAdminLoggedIn(false)} className="text-red-600 font-bold text-sm bg-red-50 px-3 py-1.5 rounded-lg">
+                          تسجيل الخروج
+                        </button>
+                      </div>
+
+                      {/* Orders List */}
+                      <div className="bg-white rounded-2xl border border-border p-4 shadow-sm">
+                        <h3 className="text-lg font-black mb-4">الطلبات الواردة ({db.orders.length})</h3>
+                        {db.orders.length === 0 ? (
+                          <p className="text-muted">لا توجد طلبات بعد.</p>
+                        ) : (
+                          <div className="space-y-4">
+                            {db.orders.map(o => (
+                              <div key={o.id} className="border border-border rounded-xl p-4 bg-background">
+                                <div className="flex justify-between items-start border-b border-border pb-2 mb-2">
+                                  <div>
+                                    <span className="font-black text-primary">{o.id}</span>
+                                    <span className="text-xs text-muted mx-2">• {o.date}</span>
+                                  </div>
+                                  <span className="bg-accent/20 text-accent font-bold px-2 py-0.5 rounded text-xs">{o.status}</span>
+                                </div>
+                                <div className="text-sm space-y-1 mb-3">
+                                  <p><strong>العميل:</strong> {o.customer} ({o.phone})</p>
+                                  <p><strong>العنوان:</strong> {o.address}</p>
+                                </div>
+                                <div className="bg-white p-2 rounded-lg border border-border text-xs mb-3">
+                                  {o.items.map(i => (
+                                    <div key={i.id} className="flex justify-between py-1">
+                                      <span>{i.name} x {i.qty}</span>
+                                      <span>{(i.price * i.qty).toLocaleString()} ل.س</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="text-left font-black text-primary">
+                                  الإجمالي: {o.total.toLocaleString()} ل.س
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+            </main>
+
+            {/* Footer */}
+            <footer className="bg-primary text-white border-t border-primary/20 py-6 text-center text-sm">
+              <p>© {new Date().getFullYear()} البيت الأبيض للألبان — جميع الحقوق محفوظة</p>
+            </footer>
+          </div>
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+    </script>
+</body>
+</html>
