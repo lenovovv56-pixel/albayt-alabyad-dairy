@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="البيت الأبيض للألبان — متجر إلكتروني لمنتجات الألبان الطازجة مع سلة وطلبات وتوصيل ضمن دمشق وريفها." />
+<meta name="robots" content="index,follow" />
+<meta name="theme-color" content="#2D5A27" />
+<meta property="og:title" content="البيت الأبيض للألبان" />
+<meta property="og:description" content="منتجات ألبان طازجة من المزرعة إلى مائدتك." />
 <title>البيت الأبيض للألبان</title>
 
 <!-- Tailwind CSS -->
@@ -63,28 +68,65 @@
 <script type="text/babel" data-type="module">
 const { useState, useMemo, useEffect } = React;
 /* ============ Local Database (localStorage) ============ */
-const DB_KEY = 'white_dairy_db_v1';
+const DB_KEY = 'white_dairy_db_v2';
+const CART_KEY = 'white_dairy_cart_v2';
 const defaultDB = {
   products: [],
   orders: [],
-  customers: []
+  customers: [],
+  settings: { adminUsername: 'admin', adminPassword: 'admin123' }
 };
 
 const loadDB = () => {
   try {
     const raw = localStorage.getItem(DB_KEY);
-    return raw ? { ...defaultDB, ...JSON.parse(raw) } : defaultDB;
+    const parsed = raw ? JSON.parse(raw) : {};
+    return { ...defaultDB, ...parsed, settings: { ...defaultDB.settings, ...(parsed.settings || {}) } };
   } catch {
-    return defaultDB;
+    return { ...defaultDB };
   }
 };
 
 const saveDB = (db) => {
-  try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch {}
+  try { localStorage.setItem(DB_KEY, JSON.stringify({ ...defaultDB, ...db })); } catch {}
+};
+
+const loadCart = () => {
+  try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch { return []; }
+};
+
+const saveCart = (cart) => {
+  try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch {}
+};
+
+const downloadTextFile = (filename, content, type = 'application/json') => {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 const makeId = (prefix = 'id') =>
   `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const ADMIN_NOTIFICATION_KEY = 'white_dairy_admin_notification_v1';
+const notifyAdminOfOrder = (order) => {
+  try {
+    localStorage.setItem(ADMIN_NOTIFICATION_KEY, JSON.stringify({ ...order, notificationId: makeId('notice') }));
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('طلب جديد - البيت الأبيض للألبان', { body: `${order.customer} • ${order.total}
+${order.products}` });
+    }
+  } catch {}
+};
+const requestAdminNotifications = async () => {
+  if (!('Notification' in window)) { alert('المتصفح الحالي لا يدعم إشعارات المتصفح.'); return false; }
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') { alert('الإشعارات مرفوضة من المتصفح. يمكنك السماح بها من إعدادات الموقع في المتصفح.'); return false; }
+  const permission = await Notification.requestPermission();
+  return permission === 'granted';
+};
 
 
 /* ============ Lucide Icons (SVG inline) ============ */
@@ -116,181 +158,776 @@ const IMG_YOGURT = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAYGB
 // 🌾 صورة الهيرو - مزرعة
 const IMG_HERO = 'https://images.unsplash.com/photo-1500595046743-cd271d694d30?w=1600';
 
-/* ============ Store Application ============ */
-const STORE_DB = 'white_dairy_store_v3';
-const defaultStore = {
-  products: [
-    {id:'labneh', name:'لبنة بلدي إكسترا', price:300, unit:'كيلو', stock:100, category:'الألبان', wholesale:true, image:IMG_LABNEH, description:'لبنة بلدية إكسترا طازجة، مبيع بسعر الجملة.'},
-    {id:'cheese', name:'جبنة بيضاء بلدية', price:430, unit:'كيلو', stock:100, category:'الأجبان', wholesale:true, image:IMG_CHEESE, description:'جبنة بيضاء بلدية طازجة، مبيع بسعر الجملة.'},
-    {id:'yogurt', name:'زبادي بلدي طازج', price:95, unit:'كيلو', stock:100, category:'الزبادي', wholesale:true, image:IMG_YOGURT, description:'زبادي بلدي طازج، مبيع بسعر الجملة.'},
-    {id:'milk', name:'حليب طبيعي كامل الدسم', price:7000, unit:'لتر', stock:50, category:'الألبان', wholesale:false, image:'https://images.unsplash.com/photo-1563636619-e9143ef2e6a0?w=600', description:'حليب طازج كامل الدسم.'},
-    {id:'butter', name:'زبدة بلدية', price:25000, unit:'كيلو', stock:30, category:'الألبان', wholesale:false, image:'https://images.unsplash.com/photo-1589985270826-4b7bb135bc9d?w=600', description:'زبدة بلدية طازجة.'},
-    {id:'laban', name:'لبن عيران', price:5000, unit:'لتر', stock:40, category:'الزبادي', wholesale:false, image:'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=600', description:'لبن عيران منعش ومبرد.'}
-  ],
-  orders: [],
-  customers: [],
-  complaints: []
+/* ============ Store data defaults: existing prices/images preserved ============ */
+const DEFAULT_STORE_PRODUCTS = [
+  { id: 'labneh', name: 'لبنة بلدية إكسترا', price: 300, image: IMG_LABNEH, category: 'الأكثر طلباً', description: 'لبنة كريمية بطعم بلدي أصيل وقوام ناعم، محضرة من أجود أنواع الحليب', unit: 'كيلو', stock: 2, tone: 'bg-[#e7efe2]', detail: 'علبة ٥٠٠ غرام' },
+  { id: 'cheese', name: 'جبنة بيضاء بلدية', price: 430, image: IMG_CHEESE, category: 'طبيعي 100%', description: 'جبنة بيضاء طازجة من حليب مزارعنا، غنية بالبروتين والكالسيوم', unit: 'كيلو', stock: 18, tone: 'bg-[#f3ead4]', detail: 'علبة ٥٠٠ غرام' },
+  { id: 'yogurt', name: 'زبادي بلدي طازج', price: 95, image: IMG_YOGURT, category: 'طازج يومياً', description: 'زبادي خفيف ومنعش، محضر صباح كل يوم من حليب طبيعي 100%', unit: 'كيلو', stock: 42, tone: 'bg-[#e8eee8]', detail: 'علبة ٤٠ غرام' },
+  { id: 'milk', name: 'حليب طبيعي كامل الدسم', price: 7000, image: 'https://images.unsplash.com/photo-1563636619-e9143ef2e6a0?w=600', category: 'طازج يومياً', description: 'حليب طازج من أبقار المزرعة، غني بالفيتامينات', unit: 'لتر', stock: null, tone: 'bg-[#e8eee8]', detail: 'لتر' },
+  { id: 'butter', name: 'زبدة بلدية', price: 25000, image: 'https://images.unsplash.com/photo-1589985270826-4b7bb135bc9d?w=600', category: 'طبيعي 100%', description: 'زبدة طازجة من حليب طبيعي، بنكهة أصلية', unit: 'كيلو', stock: null, tone: 'bg-[#f3ead4]', detail: 'كيلو' },
+  { id: 'laban', name: 'لبن عيران', price: 5000, image: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=600', category: 'الأكثر طلباً', description: 'لبن عيران منعش ومبرد، مثالي مع الوجبات', unit: 'لتر', stock: null, tone: 'bg-[#e7efe2]', detail: 'لتر' },
+];
+
+/* ============ ProductCard ============ */
+const ProductCard = ({ product, onAddToCart }) => {
+  const price = new Intl.NumberFormat('ar-SY').format(product.price);
+  return (
+    <article className="group overflow-hidden rounded-3xl border border-border bg-white shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl">
+      <div className="relative h-56 overflow-hidden bg-secondary">
+        <img src={product.image} alt={product.name}
+          className="h-full w-full object-cover object-center transition-transform duration-500 group-hover:scale-105"
+          onError={(e) => { e.target.src = `https://placehold.co/600x400/2D5A27/FFFFFF?text=${encodeURIComponent(product.name)}`; }} />
+        <div className="absolute right-3 top-3 rounded-full bg-primary px-3 py-1 text-xs font-bold text-white">
+          {product.category}
+        </div>
+      </div>
+      <div className="p-5">
+        <h3 className="text-xl font-black text-foreground">{product.name}</h3>
+        <p className="mt-2 min-h-10 text-sm leading-6 text-muted">
+          {product.description || 'منتج طازج من مزارعنا مباشرة'}
+        </p>
+        <div className="mt-5 flex items-end justify-between gap-3">
+          <div>
+            <strong className="text-xl font-black text-primary">{price}</strong>
+            <span className="mr-1 text-xs font-bold text-muted">ل.س / {product.unit}</span>
+          </div>
+          <button type="button" onClick={() => onAddToCart(product)}
+            className="flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-foreground">
+            <Icon name="Plus" size={16} /><span>أضف للسلة</span>
+          </button>
+        </div>
+      </div>
+    </article>
+  );
 };
-const loadStore = () => { try { const x=JSON.parse(localStorage.getItem(STORE_DB)||'null'); return x ? {...defaultStore,...x} : JSON.parse(JSON.stringify(defaultStore)); } catch { return JSON.parse(JSON.stringify(defaultStore)); } };
-const saveStore = db => {
-  try { localStorage.setItem(STORE_DB, JSON.stringify(db)); } catch {}
-  try {
-    const token = sessionStorage.getItem('white_admin_token');
-    if (token) {
-      fetch('/api/admin/state', {
-        method:'PUT',
-        headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
-        body:JSON.stringify(db)
-      }).catch(()=>{});
+
+
+
+/* ============ Contact Buttons ============ */
+const ContactButtons = () => (
+  <div className="fixed bottom-5 left-5 z-[70] flex flex-col gap-3" dir="ltr" aria-label="التواصل مع المتجر">
+    <a
+      href="https://wa.me/963956824459?text=%D9%85%D8%B1%D8%AD%D8%A8%D8%A7%D8%8C%20%D8%A3%D8%B1%D9%8A%D8%AF%20%D8%A7%D9%84%D8%A7%D8%B3%D8%AA%D9%81%D8%B3%D8%A7%D8%B1%20%D8%B9%D9%86%20%D9%85%D9%86%D8%AA%D8%AC%D8%A7%D8%AA%20%D8%A7%D9%84%D8%A8%D9%8A%D8%AA%20%D8%A7%D9%84%D8%A3%D8%A8%D9%8A%D8%B6%20%D9%84%D9%84%D8%A3%D9%84%D8%A8%D8%A7%D9%86"
+      target="_blank" rel="noopener noreferrer"
+      className="flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-xl transition-transform hover:scale-105"
+      title="تواصل معنا عبر واتساب" aria-label="تواصل معنا عبر واتساب"
+    >
+      <Icon name="MessageCircle" size={27} />
+    </a>
+    <a
+      href="tel:0956824459"
+      className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-xl transition-transform hover:scale-105"
+      title="اتصل بالمتجر" aria-label="اتصل بالمتجر"
+    >
+      <Icon name="Phone" size={25} />
+    </a>
+  </div>
+);
+
+/* ============ NavBar ============ */
+const NavBar = ({ cartCount, onCartClick }) => (
+  <nav className="sticky top-0 z-50 border-b border-border bg-white/95 backdrop-blur">
+    <div className="bg-primary px-4 py-2 text-center text-sm font-bold text-white">
+      توصيل مجاني ضمن دمشق وريفها لجميع الطلبات
+    </div>
+    <div className="mx-auto flex h-20 max-w-7xl items-center justify-between gap-4 px-5 sm:px-8 lg:px-12">
+      <a href="#top" className="flex items-center gap-3">
+        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-2xl">🥛</span>
+        <span>
+          <strong className="block text-lg leading-tight text-primary">البيت الأبيض للألبان</strong>
+          <small className="text-xs font-medium text-accent">طعم أصيل من المزرعة</small>
+        </span>
+      </a>
+      <div className="hidden items-center gap-8 text-sm font-bold text-[#465545] md:flex">
+        <a className="text-primary" href="#top">الرئيسية</a>
+        <a className="transition-colors hover:text-primary" href="#products">المتجر</a>
+        <a className="transition-colors hover:text-primary" href="#products">عن المنتجات</a>
+        <a className="transition-colors hover:text-primary" href="tel:0956824459">اتصل بنا</a>
+      </div>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={onCartClick}
+          className="relative rounded-full p-3 text-primary transition-colors hover:bg-secondary">
+          <Icon name="ShoppingCart" size={20} />
+          {cartCount > 0 && (
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-xs font-bold text-white">
+              {cartCount}
+            </span>
+          )}
+        </button>
+      </div>
+    </div>
+  </nav>
+);
+
+/* ============ CartDrawer ============ */
+const CartDrawer = ({ isOpen, onClose, items, onUpdateQuantity, onRemoveItem, onCheckout }) => {
+  if (!isOpen) return null;
+  const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const format = (value) => new Intl.NumberFormat('ar-SY').format(value);
+
+  return (
+    <div className="fixed inset-0 z-[100] flex justify-end">
+      <button type="button" onClick={onClose} className="absolute inset-0 cursor-default bg-foreground/50 backdrop-blur-sm" />
+      <aside className="relative flex h-full w-full max-w-md flex-col bg-white shadow-2xl">
+        <header className="flex items-center justify-between border-b border-border bg-background p-5">
+          <div className="flex items-center gap-3">
+            <Icon name="ShoppingCart" size={20} className="text-primary" />
+            <h2 className="text-xl font-black">سلة التسوق</h2>
+            <span className="rounded-full bg-primary px-2 py-1 text-xs font-bold text-white">{items.length}</span>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full p-2 hover:bg-secondary">
+            <Icon name="X" size={20} />
+          </button>
+        </header>
+        <div className="flex-1 overflow-y-auto p-5">
+          {items.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center text-center">
+              <span className="mb-4 text-6xl">🛒</span>
+              <h3 className="text-lg font-black">السلة فارغة حالياً</h3>
+              <p className="mt-2 text-sm text-muted">أضف منتجات طازجة لتبدأ طلبك.</p>
+            </div>
+          ) : (
+            <ul className="space-y-4">
+              {items.map(item => (
+                <li key={item.id} className="flex gap-3 rounded-2xl border border-border p-3">
+                  <img src={item.image} alt={item.name} className="h-20 w-20 rounded-xl object-cover"
+                    onError={(e) => { e.target.src = `https://placehold.co/200x200/2D5A27/FFFFFF?text=${encodeURIComponent(item.name)}`; }} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex justify-between gap-2">
+                      <h3 className="font-bold">{item.name}</h3>
+                      <button type="button" onClick={() => onRemoveItem(item.id)} className="text-[#8A3E35]">
+                        <Icon name="Trash2" size={16} />
+                      </button>
+                    </div>
+                    <p className="mt-1 text-sm font-bold text-primary">{format(item.price)} ل.س</p>
+                    <div className="mt-3 flex items-center justify-between">
+                      <div className="flex items-center rounded-lg border border-border">
+                        <button type="button" onClick={() => onUpdateQuantity(item.id, -1)} disabled={item.quantity <= 1} className="p-1.5 disabled:opacity-30">
+                          <Icon name="Minus" size={12} />
+                        </button>
+                        <span className="px-2 text-sm font-bold">{item.quantity}</span>
+                        <button type="button" onClick={() => onUpdateQuantity(item.id, 1)} className="p-1.5">
+                          <Icon name="Plus" size={12} />
+                        </button>
+                      </div>
+                      <strong>{format(item.price * item.quantity)} ل.س</strong>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {items.length > 0 && (
+          <footer className="border-t border-border bg-background p-5">
+            <div className="mb-4 flex items-center justify-between text-lg font-black">
+              <span>الإجمالي</span>
+              <span className="text-primary">{format(total)} ل.س</span>
+            </div>
+            <button type="button" onClick={onCheckout}
+              className="w-full rounded-full bg-primary py-4 font-bold text-white transition-colors hover:bg-foreground">
+              إتمام الطلب
+            </button>
+            <p className="mt-3 text-center text-xs text-muted">التوصيل مجاني ضمن دمشق وريفها</p>
+          </footer>
+        )}
+      </aside>
+    </div>
+  );
+};
+
+/* ============ CustomerShop ============ */
+const CustomerShop = ({ onNavigate }) => {
+  const [cart, setCart] = useState(() => loadCart());
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  useEffect(() => { saveCart(cart); }, [cart]);
+  const [showAll, setShowAll] = useState(false);
+
+  const products = useMemo(() => {
+    const db = loadDB();
+    return db.products.length ? db.products : DEFAULT_STORE_PRODUCTS;
+  }, []);
+
+  const trustPoints = [
+    { icon: 'Leaf', title: '100% طبيعي', detail: 'مكونات من الطبيعة' },
+    { icon: 'CheckCircle', title: 'طازج يومياً', detail: 'يحضّر كل صباح' },
+    { icon: 'Truck', title: 'توصيل سريع', detail: 'لباب منزلك' },
+    { icon: 'ShieldCheck', title: 'بدون مواد حافظة', detail: 'نقاء يمكنك الوثوق به' },
+  ];
+
+  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const visibleProducts = showAll ? products : products.slice(0, 3);
+
+  const addToCart = (product) => {
+    setCart(current => {
+      const existing = current.find(item => item.id === product.id);
+      const nextQty = (existing?.quantity || 0) + 1;
+      if (typeof product.stock === 'number' && nextQty > product.stock) {
+        alert('الكمية المطلوبة تتجاوز المخزون المتاح حالياً');
+        return current;
+      }
+      if (existing) return current.map(item => item.id === product.id ? { ...item, quantity: nextQty } : item);
+      return [...current, { ...product, quantity: 1 }];
+    });
+  };
+
+  const updateQuantity = (id, delta) => {
+    setCart(current => current.map(item => {
+      if (item.id !== id) return item;
+      const next = Math.max(1, item.quantity + delta);
+      if (delta > 0 && typeof item.stock === 'number' && next > item.stock) {
+        alert('لا توجد كمية إضافية متاحة لهذا المنتج');
+        return item;
+      }
+      return { ...item, quantity: next };
+    }));
+  };
+
+  const removeItem = (id) => setCart(current => current.filter(item => item.id !== id));
+
+  const whatsappUrl = useMemo(() => {
+    const list = cart.map(item => `${item.name} × ${item.quantity}`).join('، ');
+    return `https://wa.me/963956824459?text=${encodeURIComponent(`مرحبا، أريد طلب: ${list || 'منتجات ألبان'} - العنوان: `)}`;
+  }, [cart]);
+
+  return (
+    <main className="min-h-screen bg-secondary text-foreground">
+      <NavBar cartCount={cartCount} onCartClick={() => setIsCartOpen(true)} />
+
+      {/* Hero */}
+      <section className="relative isolate min-h-[570px] overflow-hidden bg-[#263b22]">
+        <img src={IMG_HERO} alt="مزرعة ألبان"
+          className="absolute inset-0 -z-20 h-full w-full object-cover" />
+        <div className="absolute inset-0 -z-10 bg-gradient-to-l from-[#152317]/80 via-[#1b321c]/35 to-transparent" />
+        <div className="mx-auto flex min-h-[570px] max-w-7xl items-center px-5 py-20 sm:px-8 lg:px-12">
+          <div className="max-w-2xl text-white">
+            <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/30 bg-primary/80 px-4 py-2 text-sm font-bold backdrop-blur-sm">
+              <Icon name="Leaf" size={16} className="text-accent" />من خير أرضنا إلى بيتك
+            </p>
+            <h1 className="text-4xl font-black leading-[1.15] sm:text-6xl">
+              ألبان طبيعية أصيلة<br /><span className="text-[#F7D66A]">من المزرعة إلى مائدتك</span>
+            </h1>
+            <a href="#products" className="mt-9 inline-flex items-center gap-3 rounded-full bg-white px-7 py-4 font-bold text-primary shadow-xl">
+              اكتشف منتجاتنا <Icon name="ArrowLeft" size={20} />
+            </a>
+          </div>
+          <div className="mr-auto hidden max-w-xs rounded-[2rem] bg-primary/95 p-7 text-white shadow-2xl lg:block">
+            <span className="mb-4 block text-4xl">🚚</span>
+            <strong className="block text-2xl leading-tight">توصيل مجاني ضمن دمشق وريفها</strong>
+          </div>
+        </div>
+      </section>
+
+      {/* Trust Badges */}
+      <section className="relative z-10 mx-auto -mt-8 max-w-6xl px-5">
+        <div className="grid grid-cols-2 overflow-hidden rounded-3xl bg-white shadow-xl sm:grid-cols-4">
+          {trustPoints.map(({ icon, title, detail }) => (
+            <div key={title} className="flex items-center gap-3 border-b border-secondary px-4 py-5 sm:border-b-0 sm:border-l sm:px-6">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-secondary text-primary">
+                <Icon name={icon} size={20} />
+              </span>
+              <div>
+                <strong className="block text-sm">{title}</strong>
+                <span className="text-xs text-muted">{detail}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Products */}
+      <section id="products" className="mx-auto max-w-7xl px-5 py-20 sm:px-8 lg:px-12">
+        <div className="mb-10 flex items-end justify-between gap-4">
+          <div>
+            <p className="mb-2 text-sm font-bold uppercase tracking-[0.2em] text-accent">اختيارنا اليومي</p>
+            <h2 className="text-3xl font-black sm:text-4xl">طازج من قلب المزرعة</h2>
+          </div>
+          <button onClick={() => setShowAll(!showAll)} className="hidden items-center gap-2 rounded-full border border-primary/20 px-4 py-2 text-sm font-bold text-primary sm:flex">
+            {showAll ? 'عرض أقل' : 'عرض الكل'} <Icon name="ChevronDown" size={16} className={showAll ? 'rotate-180' : ''} />
+          </button>
+        </div>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {visibleProducts.map(product => <ProductCard key={product.id} product={product} onAddToCart={addToCart} />)}
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="bg-foreground px-5 py-10 text-white sm:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-6 sm:flex-row">
+          <div>
+            <h2 className="text-xl font-black">البيت الأبيض للألبان</h2>
+            <p className="mt-2 text-sm text-white/60">نحفظ طعم البيت، ونوصله إليك.</p>
+          </div>
+          <address className="not-italic text-sm text-white/75">
+            <span className="block">دمشق، سوريا</span>
+            <a href="tel:0956824459" className="mt-1 block font-bold text-[#F7D66A]">0956824459</a>
+          </address>
+          <div className="flex gap-2">
+            <button onClick={() => onNavigate('checkout')} className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-bold">
+              إتمام الطلب
+            </button>
+            <button onClick={() => onNavigate('admin')} className="inline-flex items-center gap-2 rounded-full border border-white/30 px-5 py-3 text-sm font-bold">
+              لوحة الإدارة
+            </button>
+          </div>
+        </div>
+      </footer>
+
+      <CartDrawer
+        isOpen={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        items={cart}
+        onUpdateQuantity={updateQuantity}
+        onRemoveItem={removeItem}
+        onCheckout={() => { setIsCartOpen(false); onNavigate('checkout'); }}
+      />
+      <ContactButtons />
+    </main>
+  );
+};
+
+/* ============ CheckoutPage ============ */
+const CheckoutPage = ({ onNavigate }) => {
+  const [customer, setCustomer] = useState({ name: '', phone: '', address: '', notes: '' });
+  const [payment, setPayment] = useState('cash');
+  const [submitted, setSubmitted] = useState(false);
+
+  const [orderItems, setOrderItems] = useState(() => loadCart());
+  useEffect(() => {
+    const sync = () => setOrderItems(loadCart());
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, []);
+
+  const paymentOptions = [
+    { id: 'cash', title: 'الدفع عند التسليم', description: 'ادفع نقداً عند وصول طلبك' },
+  ];
+
+  const formatSyp = (value) => new Intl.NumberFormat('ar-SY').format(value);
+  const subtotal = orderItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+  const submitOrder = (event) => {
+    event.preventDefault();
+    if (!orderItems.length) { alert('السلة فارغة. أضف منتجات أولاً.'); onNavigate('shop'); return; }
+    const itemMessage = orderItems.map(item => `${item.name} × ${item.quantity}`).join('، ');
+    const paymentLabel = 'الدفع عند التسليم';
+    const message = `مرحباً، أريد تأكيد طلبي 🌿\n\nالاسم: ${customer.name}\nرقم الهاتف: ${customer.phone}\nالعنوان: ${customer.address}\nالمنتجات: ${itemMessage}\nطريقة الدفع: ${paymentLabel}\nالإجمالي: ${formatSyp(subtotal)} ل.س${customer.notes ? `\nملاحظات: ${customer.notes}` : ''}\n\nشكراً لكم`;
+    const currentDB = loadDB();
+    const customerId = currentDB.customers.find(c => c.phone === customer.phone)?.id || makeId('customer');
+    const nextCustomers = currentDB.customers.some(c => c.phone === customer.phone)
+      ? currentDB.customers.map(c => c.phone === customer.phone ? { ...c, name: customer.name, address: customer.address } : c)
+      : [...currentDB.customers, { id: customerId, name: customer.name, phone: customer.phone, address: customer.address }];
+    const order = {
+      id: `#${Math.floor(1000 + Math.random() * 9000)}`,
+      customerId,
+      customer: customer.name,
+      phone: customer.phone,
+      address: customer.address,
+      notes: customer.notes,
+      products: itemMessage,
+      payment: paymentLabel,
+      status: 'جديد',
+      total: `${formatSyp(subtotal)} ل.س`,
+      createdAt: new Date().toISOString()
+    };
+    const nextProducts = (currentDB.products.length ? currentDB.products : DEFAULT_STORE_PRODUCTS).map(product => {
+      const bought = orderItems.find(item => item.id === product.id);
+      if (!bought || typeof product.stock !== 'number') return product;
+      return { ...product, stock: Math.max(0, product.stock - bought.quantity) };
+    });
+    saveDB({ ...currentDB, products: nextProducts, customers: nextCustomers, orders: [...currentDB.orders, order] });
+    notifyAdminOfOrder(order);
+    saveCart([]);
+    window.open(`https://wa.me/963956824459?text=${encodeURIComponent(message)}`, '_blank');
+    setOrderItems([]);
+    setSubmitted(true);
+  };
+
+  return (
+    <main className="min-h-screen bg-background text-foreground">
+      <header className="border-b border-border/80 bg-white/95">
+        <div className="mx-auto flex h-[78px] max-w-7xl items-center justify-between px-5 sm:px-8">
+          <button onClick={() => onNavigate('shop')} className="group flex items-center gap-3 text-sm font-bold text-primary">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-accent/60 bg-secondary">
+              <Icon name="ArrowRight" size={16} />
+            </span>
+            العودة إلى المتجر
+          </button>
+          <h1 className="text-lg font-bold text-primary">البيت الأبيض للألبان</h1>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-7xl px-5 pb-16 pt-10 sm:px-8">
+        <div className="mb-8 flex items-center gap-4 rounded-2xl border border-accent/35 bg-secondary/65 px-5 py-4 text-primary">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white">
+            <Icon name="Truck" size={20} />
+          </span>
+          <div>
+            <p className="font-bold">توصيل مجاني ضمن دمشق وريفها</p>
+            <p className="mt-0.5 text-sm text-muted">بدون حد أدنى للطلب</p>
+          </div>
+        </div>
+
+        <form onSubmit={submitOrder} className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_400px]">
+          <div className="space-y-7">
+            <section className="rounded-[26px] border border-border bg-white p-6 shadow-md sm:p-8">
+              <div className="mb-7 flex items-start justify-between">
+                <div>
+                  <p className="mb-1 text-xs font-bold text-accent">بيانات التوصيل</p>
+                  <h3 className="text-2xl font-bold">إلى أين نرسل طلبكم؟</h3>
+                </div>
+                <Icon name="MapPin" size={24} className="text-primary" />
+              </div>
+              <div className="grid gap-5 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-2 block text-sm font-bold">الاسم <em className="not-italic text-accent">*</em></span>
+                  <input required value={customer.name} onChange={e => setCustomer(c => ({...c, name: e.target.value}))}
+                    placeholder="الاسم الكامل" className="h-12 w-full rounded-xl border border-border bg-[#FFFDF9] px-4 text-sm outline-none focus:border-primary" />
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-sm font-bold">رقم الهاتف <em className="not-italic text-accent">*</em></span>
+                  <input required type="tel" value={customer.phone} onChange={e => setCustomer(c => ({...c, phone: e.target.value}))}
+                    placeholder="مثال: 0956 824 459" className="h-12 w-full rounded-xl border border-border bg-[#FFFDF9] px-4 text-sm outline-none focus:border-primary" />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="mb-2 block text-sm font-bold">العنوان في دمشق وريفها <em className="not-italic text-accent">*</em></span>
+                  <input required value={customer.address} onChange={e => setCustomer(c => ({...c, address: e.target.value}))}
+                    placeholder="المنطقة، الشارع، البناء والطابق" className="h-12 w-full rounded-xl border border-border bg-[#FFFDF9] px-4 text-sm outline-none focus:border-primary" />
+                </label>
+                <label className="block sm:col-span-2">
+                  <span className="mb-2 block text-sm font-bold">ملاحظات إضافية <span className="font-normal text-[#7A8578]">(اختياري)</span></span>
+                  <textarea value={customer.notes} onChange={e => setCustomer(c => ({...c, notes: e.target.value}))}
+                    placeholder="وقت مناسب للتوصيل أو أي تفاصيل تساعدنا" rows={3}
+                    className="w-full resize-none rounded-xl border border-border bg-[#FFFDF9] px-4 py-3 text-sm outline-none focus:border-primary" />
+                </label>
+              </div>
+            </section>
+
+            <section className="rounded-[26px] border border-border bg-white p-6 shadow-md sm:p-8">
+              <h3 className="mb-6 text-2xl font-bold">طريقة الدفع</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {paymentOptions.map(option => (
+                  <label key={option.id} className={`cursor-pointer rounded-2xl border p-4 transition ${payment === option.id ? 'border-primary bg-secondary/60 ring-1 ring-primary' : 'border-border'}`}>
+                    <input type="radio" name="payment" value={option.id} checked={payment === option.id} onChange={() => setPayment(option.id)} className="sr-only" />
+                    <span className="flex items-start gap-3">
+                      <span className={`mt-1 flex h-5 w-5 items-center justify-center rounded-full border ${payment === option.id ? 'border-primary bg-primary' : 'border-[#A9B1A4]'}`}>
+                        {payment === option.id && <span className="h-2 w-2 rounded-full bg-white" />}
+                      </span>
+                      <span>
+                        <strong className="block text-sm">{option.title}</strong>
+                        <span className="mt-1 block text-xs text-muted">{option.description}</span>
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </section>
+          </div>
+
+          <aside className="rounded-[26px] bg-primary p-6 text-white shadow-xl sm:p-7 lg:sticky lg:top-6">
+            <h3 className="mb-6 text-2xl font-bold">ملخص طلبكم</h3>
+            <div className="space-y-4 border-b border-white/15 pb-6">
+              {orderItems.map(item => (
+                <div key={item.id} className="flex items-center gap-3">
+                  <img src={item.image} alt={item.name} className="h-16 w-16 shrink-0 rounded-xl object-cover" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-bold">{item.name}</p>
+                    <p className="mt-1 text-xs text-white/65">{item.detail} · الكمية {item.quantity}</p>
+                  </div>
+                  <p className="text-sm font-bold">{formatSyp(item.price * item.quantity)} ل.س</p>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-3 py-5 text-sm">
+              <div className="flex justify-between text-white/70"><span>المجموع الفرعي</span><span>{formatSyp(subtotal)} ل.س</span></div>
+              <div className="flex justify-between text-[#E5C14F]"><span>التوصيل</span><span>مجاني</span></div>
+              <div className="mt-4 flex items-end justify-between border-t border-white/15 pt-4">
+                <span className="font-bold">الإجمالي</span>
+                <strong className="text-2xl">{formatSyp(subtotal)} <small className="text-xs font-normal">ل.س</small></strong>
+              </div>
+            </div>
+            <button type="submit" className="flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-accent px-5 text-base font-bold text-foreground shadow-lg hover:bg-[#E5C14F]">
+              <Icon name="MessageCircle" size={20} />تأكيد الطلب عبر واتساب
+            </button>
+            <p className="mt-4 text-center text-xs text-white/65">
+              سيتم إرسال الطلب إلى <strong dir="ltr">0956824459</strong>
+            </p>
+            {submitted && <p className="mt-4 rounded-lg bg-white/10 px-3 py-2 text-center text-xs text-[#E5C14F]">تم تجهيز رسالتكم ✓</p>}
+          </aside>
+        </form>
+      </div>
+      <ContactButtons />
+    </main>
+  );
+};
+
+/* ============ AdminDashboard ============ */
+const AdminDashboard = ({ onNavigate }) => {
+  const [activeFilter, setActiveFilter] = useState('كل الطلبات');
+  const [search, setSearch] = useState('');
+  const [dbVersion, setDbVersion] = useState(0);
+  const [lastNoticeId, setLastNoticeId] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(ADMIN_NOTIFICATION_KEY) || 'null')?.notificationId || ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    const handleStorage = (event) => {
+      if (event.key !== ADMIN_NOTIFICATION_KEY || !event.newValue) return;
+      try {
+        const notice = JSON.parse(event.newValue);
+        if (!notice?.notificationId || notice.notificationId === lastNoticeId) return;
+        setLastNoticeId(notice.notificationId);
+        setDbVersion(v => v + 1);
+        if (document.visibilityState === 'visible') {
+          alert(`🔔 طلب جديد من ${notice.customer} بقيمة ${notice.total}`);
+        }
+      } catch {}
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [lastNoticeId]);
+
+  const sampleOrders = [
+    { id: '#1048', customer: 'سارة الخطيب', products: 'لبنة بلدية إكسترا × 2', address: 'المزة · دمشق', payment: 'عند الاستلام', status: 'جديد', total: '١٥,٠٠٠ ل.س' },
+    { id: '#1047', customer: 'محمد الحمصي', products: 'جبنة بيضاء × 1، زبادي × 2', address: 'جرمانا · ريف دمشق', payment: 'عند الاستلام', status: 'قيد التجهيز', total: '١٧٥,٠٠٠ ل.س' },
+    { id: '#1046', customer: 'رنا العبدالله', products: 'حليب طبيعي × 3', address: 'أبو رمانة · دمشق', payment: 'عند الاستلام', status: 'تم التسليم', total: '٩٠,٠٠٠ ل.س' },
+    { id: '#1045', customer: 'عمر الحلبي', products: 'لبنة بلدية × 1، جبنة × 1', address: 'قدسيا · ريف دمشق', payment: 'عند الاستلام', status: 'تم التسليم', total: '١٦٠,٠٠٠ ل.س' },
+  ];
+  const savedOrders = loadDB().orders;
+  const orders = savedOrders.length ? [...savedOrders].reverse() : [];
+  const liveDB = loadDB();
+
+  const initialProducts = DEFAULT_STORE_PRODUCTS;
+  const [db, setDb] = useState(() => loadDB());
+  const products = db.products.length ? db.products : initialProducts;
+
+  useEffect(() => {
+    if (!db.products.length) {
+      const next = { ...db, products: initialProducts };
+      saveDB(next);
+      setDb(next);
     }
-  } catch {}
+  }, []);
+
+  const filters = ['كل الطلبات', 'جديد', 'قيد التجهيز', 'مكتمل'];
+
+  const filteredOrders = orders.filter(order => {
+    const matchesFilter = activeFilter === 'كل الطلبات' || (activeFilter === 'مكتمل' ? order.status === 'تم التسليم' : order.status === activeFilter);
+    const matchesSearch = `${order.id} ${order.customer} ${order.products}`.includes(search);
+    return matchesFilter && matchesSearch;
+  });
+
+  const [isLoggedIn, setIsLoggedIn] = useState(() => sessionStorage.getItem('admin_logged_in') === '1');
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+
+  const login = (event) => {
+    event.preventDefault();
+    // Change these demo credentials before public deployment.
+    const settings = loadDB().settings || defaultDB.settings;
+    if (loginForm.username === settings.adminUsername && loginForm.password === settings.adminPassword) {
+      sessionStorage.setItem('admin_logged_in', '1');
+      setIsLoggedIn(true);
+    } else {
+      alert('اسم المستخدم أو كلمة المرور غير صحيحة');
+    }
+  };
+
+  const logout = () => {
+    sessionStorage.removeItem('admin_logged_in');
+    setIsLoggedIn(false);
+  };
+
+  if (!isLoggedIn) {
+    return (
+      <main className="min-h-screen bg-background px-5 py-12 text-foreground">
+        <div className="mx-auto max-w-md rounded-3xl border border-border bg-white p-7 shadow-xl">
+          <div className="mb-7 text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-2xl font-black text-white">ب</div>
+            <h1 className="text-2xl font-black text-primary">تسجيل دخول الإدارة</h1>
+            <p className="mt-2 text-sm text-muted">الدخول إلى لوحة إدارة المتجر</p>
+          </div>
+          <form onSubmit={login} className="space-y-4">
+            <input required value={loginForm.username} onChange={e => setLoginForm(v => ({...v, username: e.target.value}))}
+              placeholder="اسم المستخدم" className="h-12 w-full rounded-xl border border-border px-4 outline-none focus:border-primary" />
+            <input required type="password" value={loginForm.password} onChange={e => setLoginForm(v => ({...v, password: e.target.value}))}
+              placeholder="كلمة المرور" className="h-12 w-full rounded-xl border border-border px-4 outline-none focus:border-primary" />
+            <button className="w-full rounded-xl bg-primary py-4 font-bold text-white">دخول</button>
+          </form>
+          <p className="mt-4 text-center text-xs text-muted">يمكن تغيير بيانات الدخول من أدوات الإدارة بعد تسجيل الدخول.</p>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-background text-foreground">
+      <header className="border-b border-[#ded6c8] bg-white/95 px-5 py-4 sm:px-8">
+        <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary text-xl font-black text-white">ب</div>
+            <div>
+              <p className="text-base font-extrabold text-primary">البيت الأبيض للألبان</p>
+              <p className="text-xs text-[#7c8778]">إدارة المتجر اليومية</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => onNavigate('shop')} className="flex items-center gap-2 rounded-xl border border-primary/25 px-4 py-2 text-sm font-bold text-primary hover:bg-[#eef4eb]">
+              العودة إلى واجهة العملاء <Icon name="ArrowLeft" size={16} />
+            </button>
+            <button onClick={logout} className="rounded-xl border border-[#8A3E35]/25 px-4 py-2 text-sm font-bold text-[#8A3E35] hover:bg-[#fff4f2]">
+              تسجيل الخروج
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-[1440px] px-5 pb-12 pt-8 sm:px-8">
+        <section className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-2xl bg-primary p-5 text-white shadow-lg">
+            <div className="flex items-center justify-between"><span className="text-sm font-bold text-white/75">إجمالي الطلبات</span><Icon name="ShoppingBag" size={19} className="text-[#e8c95b]" /></div>
+            <p className="mt-5 text-3xl font-black">{orders.length}</p>
+            <p className="mt-2 text-xs text-white/70">الطلبات المحفوظة فعلياً على هذا الجهاز</p>
+          </article>
+          <article className="rounded-2xl border border-[#ded6c8] bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between"><span className="text-sm font-bold text-[#697567]">مبيعات اليوم</span><Icon name="WalletCards" size={19} className="text-accent" /></div>
+            <p className="mt-5 text-3xl font-black">{new Intl.NumberFormat('ar-SY').format(orders.reduce((sum, o) => sum + (parseInt(String(o.total).replace(/[^0-9]/g, '')) || 0), 0))} <small className="text-sm font-bold text-[#697567]">ل.س</small></p>
+            <p className="mt-2 text-xs font-bold text-primary">إجمالي الطلبات المحفوظة</p>
+          </article>
+          <article className="rounded-2xl border border-[#ded6c8] bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between"><span className="text-sm font-bold text-[#697567]">قيد التجهيز</span><Icon name="Package" size={19} className="text-accent" /></div>
+            <p className="mt-5 text-3xl font-black">{orders.filter(o => o.status === 'جديد' || o.status === 'قيد التجهيز').length}</p>
+            <p className="mt-2 text-xs text-[#697567]">تحتاج إلى متابعة</p>
+          </article>
+          <article className="rounded-2xl border border-[#ded6c8] bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between"><span className="text-sm font-bold text-[#697567]">التوصيل المجاني</span><Icon name="Truck" size={19} className="text-accent" /></div>
+            <p className="mt-5 text-xl font-black">دمشق وريفها</p>
+            <p className="mt-2 text-xs text-[#697567]">لكل الطلبات دون حد أدنى</p>
+          </article>
+        </section>
+
+        <section className="mb-8 rounded-2xl border border-[#ded6c8] bg-white p-5 shadow-sm sm:p-6">
+          <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="text-xl font-black">الطلبات الأخيرة</h2>
+              <p className="mt-1 text-sm text-[#7b8579]">تابع حالة الطلبات ونسّق عملية التوصيل</p>
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-[#e3ded4] bg-[#fcfbf8] px-3 py-2 text-sm text-[#7d877b]">
+              <Icon name="Search" size={16} />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="بحث سريع" className="w-32 bg-transparent outline-none placeholder:text-[#9ca49b]" />
+            </div>
+          </div>
+          <div className="mb-2 flex flex-wrap gap-2 border-b border-[#eee9df] pb-5">
+            {filters.map(filter => (
+              <button key={filter} type="button" onClick={() => setActiveFilter(filter)}
+                className={`rounded-full px-4 py-2 text-xs font-bold transition ${activeFilter === filter ? 'bg-primary text-white' : 'bg-[#f7f5ef] text-[#697567] hover:bg-[#eef4eb]'}`}>
+                {filter}
+              </button>
+            ))}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[780px] text-right text-sm">
+              <thead>
+                <tr className="border-b border-[#eee9df] text-xs text-[#8a9488]">
+                  <th className="px-3 py-4 font-bold">رقم الطلب</th>
+                  <th className="px-3 py-4 font-bold">اسم العميل</th>
+                  <th className="px-3 py-4 font-bold">المنتجات</th>
+                  <th className="px-3 py-4 font-bold">العنوان</th>
+                  <th className="px-3 py-4 font-bold">طريقة الدفع</th>
+                  <th className="px-3 py-4 font-bold">الحالة</th>
+                  <th className="px-3 py-4 font-bold">الإجمالي</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredOrders.map(order => (
+                  <tr key={order.id} className="border-b border-[#f1eee8] hover:bg-[#fcfbf8]">
+                    <td className="px-3 py-4 font-black text-primary">{order.id}</td>
+                    <td className="px-3 py-4 font-bold">{order.customer}</td>
+                    <td className="max-w-[170px] px-3 py-4 text-xs text-[#657164]">{order.products}</td>
+                    <td className="px-3 py-4 text-xs text-[#657164]">{order.address}</td>
+                    <td className="px-3 py-4 text-xs font-bold">{order.payment}</td>
+                    <td className="px-3 py-4">
+                      <select value={order.status} onChange={e => {
+                        const db = loadDB();
+                        saveDB({ ...db, orders: db.orders.map(o => o.id === order.id ? { ...o, status: e.target.value, updatedAt: new Date().toISOString() } : o) });
+                        setDbVersion(v => v + 1);
+                      }} className="rounded-lg border border-border bg-white px-2 py-1 text-xs font-bold">
+                        <option>جديد</option><option>قيد التجهيز</option><option>خرج للتوصيل</option><option>تم التسليم</option><option>ملغي</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-4 font-black">{order.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="mb-8 rounded-2xl border border-[#ded6c8] bg-white p-5 shadow-sm sm:p-6">
+          <div className="mb-5">
+            <h2 className="text-xl font-black">أدوات تشغيل المتجر</h2>
+            <p className="mt-1 text-sm text-[#7b8579]">إضافات إدارية بدون تغيير واجهة العملاء أو الأسعار الحالية.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <button type="button" onClick={async () => { const ok = await requestAdminNotifications(); alert(ok ? 'تم تفعيل إشعارات الطلبات الجديدة لهذا المتصفح.' : 'لم يتم تفعيل الإشعارات.'); }} className="rounded-xl border border-accent/40 bg-secondary/40 px-4 py-3 text-sm font-bold text-primary hover:bg-[#eef4eb]">تفعيل إشعارات الطلبات</button>
+            <button type="button" onClick={() => downloadTextFile('نسخة-احتياطية-البيت-الأبيض.json', JSON.stringify(loadDB(), null, 2))} className="rounded-xl border border-[#ded6c8] px-4 py-3 text-sm font-bold text-primary hover:bg-[#eef4eb]">تصدير نسخة احتياطية</button>
+            <label className="cursor-pointer rounded-xl border border-[#ded6c8] px-4 py-3 text-center text-sm font-bold text-primary hover:bg-[#eef4eb]">استيراد نسخة احتياطية
+              <input type="file" accept="application/json" className="hidden" onChange={e => { const file=e.target.files?.[0]; if(!file)return; const r=new FileReader(); r.onload=()=>{ try { const data=JSON.parse(r.result); saveDB(data); setDbVersion(v=>v+1); alert('تم استيراد النسخة الاحتياطية بنجاح'); } catch { alert('ملف النسخة الاحتياطية غير صالح'); } }; r.readAsText(file); }} />
+            </label>
+            <button type="button" onClick={() => { const db=loadDB(); const username=prompt('اسم مستخدم الإدارة الجديد', db.settings.adminUsername); if(!username)return; const password=prompt('كلمة مرور الإدارة الجديدة (8 أحرف أو أكثر)', db.settings.adminPassword); if(!password || password.length < 8){ alert('كلمة المرور يجب أن تكون 8 أحرف أو أكثر'); return; } saveDB({...db, settings:{...db.settings, adminUsername:username, adminPassword:password}}); alert('تم تغيير بيانات الدخول. استخدمها في تسجيل الدخول القادم.'); }} className="rounded-xl border border-[#ded6c8] px-4 py-3 text-sm font-bold text-primary hover:bg-[#eef4eb]">تغيير بيانات الإدارة</button>
+            <button type="button" onClick={() => { if(confirm('هل تريد حذف الطلبات المحفوظة على هذا الجهاز؟')) { const db=loadDB(); saveDB({...db, orders:[]}); setDbVersion(v=>v+1); } }} className="rounded-xl border border-[#8A3E35]/30 px-4 py-3 text-sm font-bold text-[#8A3E35] hover:bg-[#fff4f2]">حذف الطلبات المحلية</button>
+          </div>
+          <div className="mt-4 rounded-xl bg-[#fffaf0] p-4 text-xs leading-6 text-[#6f6758]">تنبيه: النسخة الحالية تعمل بدون دفع إلكتروني، والطلب يكون بالدفع عند التسليم. البيانات محفوظة في متصفح الجهاز، لذلك قاعدة البيانات السحابية المشتركة والحماية الخلفية الاحترافية تحتاجان خادماً/خدمة خارجية عند النشر الرسمي.</div>
+        </section>
+
+        <section className="rounded-2xl border border-[#ded6c8] bg-white p-5 shadow-sm sm:p-6">
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-black">قائمة المنتجات</h2>
+              <p className="mt-1 text-sm text-[#7b8579]">المخزون والأسعار الحالية</p>
+            </div>
+            <button className="flex items-center gap-2 rounded-xl border border-[#ded6c8] px-4 py-2 text-sm font-bold text-primary hover:bg-[#eef4eb]">
+              <Icon name="Settings" size={16} /> إدارة المنتجات
+            </button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {products.map(product => (
+              <article key={product.id} className="flex items-center gap-3 rounded-2xl border border-[#eee9df] p-3 hover:border-[#c9d7c3]">
+                <div className={`h-16 w-16 shrink-0 overflow-hidden rounded-xl ${product.tone}`}>
+                  <img src={product.image} alt={product.name} className="h-full w-full object-cover" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="truncate text-sm font-black">{product.name}</h3>
+                  <p className="mt-1 text-xs text-[#899289]">{product.detail}</p>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-primary">{typeof product.price === 'number' ? new Intl.NumberFormat('ar-SY').format(product.price) + ' ل.س' : product.price}</span>
+                    <span className="text-[11px] font-bold text-[#697567]">متوفر: {typeof product.stock === 'number' ? product.stock : 'غير محدد'}</span>
+                  </div>
+                </div>
+                <button type="button" onClick={() => { const db=loadDB(); const current=db.products.length ? db.products : DEFAULT_STORE_PRODUCTS; const p=current.find(x=>x.id===product.id); const value=prompt(`المخزون الحالي لـ ${product.name}. اكتب كمية جديدة أو اتركه فارغاً لغير محدد:`, typeof p?.stock==='number'?p.stock:''); if(value===null)return; const stock=value.trim()===''?null:Math.max(0,Number(value)); if(value.trim()!=='' && !Number.isFinite(stock)){alert('أدخل رقماً صحيحاً');return;} saveDB({...db, products:current.map(x=>x.id===product.id?{...x,stock}:x)}); setDbVersion(v=>v+1); }} className="shrink-0 rounded-lg border border-primary/20 px-2 py-1 text-[11px] font-bold text-primary">تعديل المخزون</button>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+    </main>
+  );
 };
-const money = v => new Intl.NumberFormat('ar-SY').format(Number(v)||0);
-const uid = p => `${p}_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
 
-const Toast = ({message,onClose}) => message ? <div className="fixed bottom-5 left-5 z-[300] flex items-center gap-3 rounded-2xl bg-foreground px-5 py-4 text-white shadow-2xl"><Icon name="CheckCircle" size={19} className="text-accent"/><span className="text-sm font-bold">{message}</span><button onClick={onClose}><Icon name="X" size={16}/></button></div> : null;
+/* ============ App (Router) ============ */
+function App() {
+  const [page, setPage] = useState('shop');
+  const navigate = (p) => {
+    setPage(p);
+    window.scrollTo(0, 0);
+  };
 
-const ProductCard = ({product,onAdd,onFavorite,favorite}) => <article className="group overflow-hidden rounded-3xl border border-border bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl">
-  <div className="relative h-56 overflow-hidden bg-secondary">
-    <img src={product.image} alt={product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" onError={e=>e.currentTarget.src='https://placehold.co/600x400/2D5A27/FFFFFF?text='+encodeURIComponent(product.name)}/>
-    <div className="absolute right-3 top-3 rounded-full bg-primary px-3 py-1 text-xs font-bold text-white">{product.category}</div>
-    {product.wholesale && <div className="absolute left-3 top-3 rounded-full bg-accent px-3 py-1 text-xs font-black">سعر الجملة</div>}
-    <button onClick={()=>onFavorite(product.id)} className="absolute bottom-3 left-3 rounded-full bg-white/95 p-2 text-primary shadow" title="المفضلة"><Icon name="Heart" size={18} className={favorite?'fill-current':''}/></button>
-  </div>
-  <div className="p-5">
-    <h3 className="text-xl font-black">{product.name}</h3>
-    <p className="mt-2 min-h-10 text-sm leading-6 text-muted">{product.description}</p>
-    <div className="mt-4 flex items-end justify-between gap-3">
-      <div><strong className="text-xl font-black text-primary">{money(product.price)}</strong><span className="mr-1 text-xs font-bold text-muted">ل.س / {product.unit}</span><span className="mt-1 block text-[11px] font-bold text-accent">المبيع بسعر الجملة</span></div>
-      <button disabled={!product.stock} onClick={()=>onAdd(product)} className="flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-sm font-bold text-white disabled:opacity-40"><Icon name="Plus" size={16}/>أضف للسلة</button>
-    </div>
-    <p className="mt-3 text-xs font-bold text-muted">{product.stock ? `متوفر حالياً: ${product.stock} ${product.unit}` : 'غير متوفر حالياً'}</p>
-  </div>
-</article>;
+  if (page === 'admin') return <AdminDashboard onNavigate={navigate} />;
+  if (page === 'checkout') return <CheckoutPage onNavigate={navigate} />;
+  return <CustomerShop onNavigate={navigate} />;
+}
 
-const NavBar = ({cartCount,onCartClick,onAdmin}) => <nav className="sticky top-0 z-50 border-b border-border bg-white/95 backdrop-blur">
-  <div className="bg-primary px-4 py-2 text-center text-sm font-bold text-white">توصيل مجاني ضمن دمشق وريفها · المبيع بسعر الجملة</div>
-  <div className="mx-auto flex h-20 max-w-7xl items-center justify-between gap-4 px-5 sm:px-8 lg:px-12">
-    <a href="#top" className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-full bg-primary text-2xl">🥛</span><span><strong className="block text-lg leading-tight text-primary">البيت الأبيض للألبان</strong><small className="text-xs text-accent">طعم أصيل من المزرعة</small></span></a>
-    <div className="hidden items-center gap-6 text-sm font-bold text-[#465545] md:flex"><a href="#top">الرئيسية</a><a href="#products">المتجر</a><a href="#favorites">المفضلة</a><a href="#contact">اتصل بنا</a></div>
-    <div className="flex items-center gap-1"><button onClick={onAdmin} className="hidden rounded-full p-3 text-primary hover:bg-secondary md:block" title="لوحة الإدارة"><Icon name="Settings" size={19}/></button><button onClick={onCartClick} className="relative rounded-full p-3 text-primary hover:bg-secondary" title="السلة"><Icon name="ShoppingCart" size={21}/>{cartCount>0&&<span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-xs font-bold text-white">{cartCount}</span>}</button></div>
-  </div>
-</nav>;
-
-const CartDrawer = ({open,onClose,items,products,onAdd,onQty,onRemove,onClear,onOrder}) => {
-  const [search,setSearch]=useState(''); const [name,setName]=useState(''); const [phone,setPhone]=useState(''); const [address,setAddress]=useState(''); const [notes,setNotes]=useState('');
-  useEffect(()=>{if(open){try{const c=JSON.parse(localStorage.getItem('white_dairy_customer')||'{}');setName(c.name||'');setPhone(c.phone||'');setAddress(c.address||'');}catch{}}},[open]);
-  if(!open)return null;
-  const total=items.reduce((s,i)=>s+i.price*i.quantity,0); const results=products.filter(p=>(p.name+' '+p.category).toLowerCase().includes(search.trim().toLowerCase()));
-  const submit=()=>{if(!items.length)return; if(!name.trim()||!phone.trim()||!address.trim()){alert('يرجى إدخال الاسم ورقم الهاتف والعنوان قبل تأكيد الطلب.');return;} onOrder({name:name.trim(),phone:phone.trim(),address:address.trim(),notes:notes.trim()});};
-  return <div className="fixed inset-0 z-[150] flex justify-end"><button className="absolute inset-0 bg-foreground/55" onClick={onClose}/><aside className="relative flex h-full w-full max-w-lg flex-col bg-white shadow-2xl">
-    <header className="flex items-center justify-between border-b border-border bg-background p-5"><div className="flex items-center gap-3"><Icon name="ShoppingCart" size={21} className="text-primary"/><h2 className="text-xl font-black">سلة التسوق</h2><span className="rounded-full bg-primary px-2 py-1 text-xs font-bold text-white">{items.reduce((s,i)=>s+i.quantity,0)}</span></div><button onClick={onClose} className="rounded-full p-2 hover:bg-secondary"><Icon name="X"/></button></header>
-    <div className="border-b border-border p-4"><label className="mb-2 block text-sm font-black">بحث وإضافة منتج</label><div className="relative"><Icon name="Search" size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="اكتب اسم المنتج..." className="w-full rounded-xl border border-border bg-background py-3 pr-10 pl-3 outline-none focus:border-primary"/></div>{search.trim()&&<div className="mt-2 max-h-44 overflow-y-auto rounded-xl border border-border">{results.length?results.map(p=><button key={p.id} onClick={()=>{onAdd(p);setSearch('')}} className="flex w-full items-center justify-between border-b border-border px-3 py-3 text-right last:border-0 hover:bg-secondary"><span><b className="block">{p.name}</b><small className="text-muted">{money(p.price)} ل.س / {p.unit}</small></span><span className="rounded-lg bg-primary px-3 py-1 text-xs font-bold text-white">إضافة</span></button>):<p className="p-3 text-sm text-muted">لا يوجد منتج مطابق.</p>}</div>}</div>
-    <div className="flex-1 overflow-y-auto p-5 space-y-4">
-      {items.length===0?<div className="flex h-full flex-col items-center justify-center text-center"><span className="text-6xl">🛒</span><h3 className="mt-4 font-black">السلة فارغة</h3><p className="mt-2 text-sm text-muted">ابحث عن منتج وأضفه للسلة.</p></div>:<>
-        <div className="space-y-3">{items.map(i=><div key={i.id} className="rounded-2xl border border-border p-3"><div className="flex gap-3"><img src={i.image} alt={i.name} className="h-20 w-20 rounded-xl object-cover"/><div className="min-w-0 flex-1"><div className="flex justify-between gap-2"><b>{i.name}</b><button onClick={()=>onRemove(i.id)} className="text-[#8A3E35]"><Icon name="Trash2" size={16}/></button></div><p className="mt-1 text-xs text-muted">السعر: {money(i.price)} ل.س / {i.unit}</p><div className="mt-3 flex items-center justify-between"><div className="flex items-center rounded-lg border border-border"><button onClick={()=>onQty(i.id,-1)} className="p-2"><Icon name="Minus" size={14}/></button><b className="min-w-9 text-center">{i.quantity}</b><button onClick={()=>onQty(i.id,1)} className="p-2"><Icon name="Plus" size={14}/></button></div><b>{money(i.price*i.quantity)} ل.س</b></div></div></div></div>)}</div>
-        <div className="rounded-2xl border border-border bg-background p-4"><div className="flex justify-between text-sm"><span>عدد الأصناف</span><b>{items.length}</b></div><div className="mt-2 flex justify-between text-sm"><span>إجمالي الكميات</span><b>{items.reduce((s,i)=>s+i.quantity,0)}</b></div><div className="mt-3 border-t border-border pt-3 flex justify-between text-xl"><b>السعر الإجمالي</b><strong className="text-primary">{money(total)} ل.س</strong></div></div>
-        <div className="rounded-2xl border border-border p-4"><h3 className="mb-3 font-black">بيانات التوصيل</h3><div className="grid gap-3 sm:grid-cols-2"><input value={name} onChange={e=>setName(e.target.value)} placeholder="اسم العميل *" className="rounded-xl border border-border p-3 outline-none focus:border-primary"/><input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="رقم الهاتف *" className="rounded-xl border border-border p-3 outline-none focus:border-primary"/></div><textarea value={address} onChange={e=>setAddress(e.target.value)} rows="3" placeholder="العنوان بالتفصيل *" className="mt-3 w-full rounded-xl border border-border p-3 outline-none focus:border-primary"/><textarea value={notes} onChange={e=>setNotes(e.target.value)} rows="2" placeholder="ملاحظات إضافية (اختياري)" className="mt-3 w-full rounded-xl border border-border p-3 outline-none focus:border-primary"/></div>
-      </>}
-    </div>
-    {items.length>0&&<footer className="border-t border-border bg-background p-5"><div className="mb-3 flex items-center justify-between text-xl font-black"><span>الإجمالي النهائي</span><span className="text-primary">{money(total)} ل.س</span></div><div className="mb-3 grid grid-cols-2 gap-2"><button onClick={onClear} className="rounded-xl border border-[#8A3E35]/30 py-3 text-sm font-bold text-[#8A3E35]">تفريغ السلة</button><button onClick={submit} className="rounded-xl bg-primary py-3 text-sm font-bold text-white"><Icon name="MessageCircle" size={17}/> تأكيد الطلب</button></div><p className="text-center text-xs text-muted">التوصيل مجاني ضمن دمشق وريفها · المبيع بسعر الجملة</p></footer>}
-  </aside></div>;
-};
-
-const OrderHistory = ({orders,onClose}) => <div className="fixed inset-0 z-[140] flex items-center justify-center bg-foreground/55 p-4"><div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl"><div className="flex items-center justify-between"><h2 className="text-2xl font-black">طلباتي</h2><button onClick={onClose}><Icon name="X"/></button></div>{orders.length?<div className="mt-5 space-y-3">{orders.slice().reverse().map(o=><div key={o.id} className="rounded-2xl border border-border p-4"><div className="flex justify-between gap-3"><b className="text-primary">{o.id}</b><span className="rounded-full bg-secondary px-3 py-1 text-xs font-bold">{o.status}</span></div><p className="mt-2 text-sm">{o.items.map(i=>`${i.name} × ${i.quantity}`).join('، ')}</p><p className="mt-2 text-sm text-muted">{o.address}</p><strong className="mt-2 block">{money(o.total)} ل.س</strong></div>)}</div>:<p className="py-10 text-center text-muted">لا توجد طلبات محفوظة على هذا الجهاز.</p>}</div></div>;
-
-const CustomerShop = ({onNavigate}) => {
-  const [db,setDb]=useState(loadStore); const [cart,setCart]=useState(()=>{try{return JSON.parse(localStorage.getItem('white_dairy_cart')||'[]')}catch{return[]}}); const [openCart,setOpenCart]=useState(false); const [search,setSearch]=useState(''); const [cat,setCat]=useState('الكل'); const [favorites,setFavorites]=useState(()=>{try{return JSON.parse(localStorage.getItem('white_dairy_favorites')||'[]')}catch{return[]}}); const [showAll,setShowAll]=useState(false); const [showOrders,setShowOrders]=useState(false); const [toast,setToast]=useState('');
-  useEffect(()=>saveStore(db),[db]);
-  useEffect(()=>{fetch('/api/catalog').then(r=>r.ok?r.json():null).then(x=>{if(x&&Array.isArray(x.products)){setDb(d=>({...d,products:x.products}));}}).catch(()=>{});},[]);
-  useEffect(()=>localStorage.setItem('white_dairy_cart',JSON.stringify(cart)),[cart]); useEffect(()=>localStorage.setItem('white_dairy_favorites',JSON.stringify(favorites)),[favorites]);
-  const products=db.products; const categories=['الكل',...new Set(products.map(p=>p.category))]; const filtered=products.filter(p=>(cat==='الكل'||p.category===cat)&&(p.name+' '+p.description).toLowerCase().includes(search.trim().toLowerCase())&&(showAll||p.wholesale)); const count=cart.reduce((s,i)=>s+i.quantity,0);
-  const add=p=>setCart(c=>{const x=c.find(i=>i.id===p.id);setToast('تمت إضافة '+p.name+' إلى السلة');return x?c.map(i=>i.id===p.id?{...i,quantity:i.quantity+1}:i):[...c,{...p,quantity:1}]});
-  const qty=(id,d)=>setCart(c=>c.map(i=>i.id===id?{...i,quantity:Math.max(1,i.quantity+d)}:i)); const remove=id=>setCart(c=>c.filter(i=>i.id!==id));
-  const order=info=>{const total=cart.reduce((s,i)=>s+i.price*i.quantity,0);const id='#'+String(Date.now()).slice(-6);const o={id,customer:info.name,phone:info.phone,address:info.address,notes:info.notes,items:cart.map(({id,name,price,unit,quantity})=>({id,name,price,unit,quantity})),products:cart.map(i=>`${i.name} × ${i.quantity}`).join('، '),total,status:'جديد',createdAt:new Date().toISOString()};const next={...db,orders:[...db.orders,o],customers:[...db.customers.filter(c=>c.phone!==info.phone),{id:uid('customer'),name:info.name,phone:info.phone,address:info.address,lastOrderAt:o.createdAt}]};setDb(next);saveStore(next);
-    fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).catch(()=>{});
-    localStorage.setItem('white_dairy_customer',JSON.stringify(info));const msg=`مرحباً، أريد تأكيد طلبي ${id}\nالعميل: ${info.name}\nالهاتف: ${info.phone}\nالمنتجات: ${o.products}\nالعنوان: ${info.address}\nالإجمالي: ${money(total)} ل.س${info.notes?'\nملاحظات: '+info.notes:''}\nالمبيع بسعر الجملة`;window.open('https://wa.me/963956824459?text='+encodeURIComponent(msg),'_blank');setCart([]);setOpenCart(false);setToast('تم حفظ الطلب وإرساله إلى واتساب');};
-  const toggleFav=id=>setFavorites(f=>f.includes(id)?f.filter(x=>x!==id):[...f,id]);
-  return <main id="top" className="min-h-screen bg-secondary text-foreground"><NavBar cartCount={count} onCartClick={()=>setOpenCart(true)} onAdmin={()=>onNavigate('admin')}/>
-    <section className="relative isolate min-h-[500px] overflow-hidden bg-[#263b22]"><img src={IMG_HERO} alt="مزرعة ألبان" className="absolute inset-0 -z-20 h-full w-full object-cover"/><div className="absolute inset-0 -z-10 bg-gradient-to-l from-[#152317]/85 via-[#1b321c]/40 to-transparent"/><div className="mx-auto flex min-h-[500px] max-w-7xl items-center px-5 py-20"><div className="max-w-2xl text-white"><p className="mb-5 inline-flex rounded-full border border-white/30 bg-primary/80 px-4 py-2 text-sm font-bold">🌿 من خير أرضنا إلى بيتك</p><h1 className="text-4xl font-black leading-tight sm:text-6xl">ألبان طبيعية أصيلة<br/><span className="text-[#F7D66A]">بأسعار الجملة</span></h1><p className="mt-5 max-w-xl text-white/80">منتجات طازجة مع سلة ذكية، حفظ للطلبات، متابعة للإدارة، وتأكيد الطلب عبر واتساب.</p><a href="#products" className="mt-8 inline-flex rounded-full bg-white px-7 py-4 font-bold text-primary">ابدأ التسوق</a></div><div className="mr-auto hidden max-w-xs rounded-[2rem] bg-primary/95 p-7 text-white shadow-2xl lg:block"><span className="text-4xl">🚚</span><strong className="mt-4 block text-2xl">توصيل مجاني ضمن دمشق وريفها</strong></div></div></section>
-    <section className="mx-auto -mt-8 max-w-6xl px-5"><div className="grid grid-cols-2 overflow-hidden rounded-3xl bg-white shadow-xl sm:grid-cols-4">{[['Leaf','100% طبيعي','مكونات من الطبيعة'],['CheckCircle','طازج يومياً','يحضّر كل صباح'],['Truck','توصيل سريع','لباب منزلك'],['ShieldCheck','سعر الجملة','للمنتجات المحددة']].map(x=><div key={x[1]} className="flex items-center gap-3 border-b border-secondary px-4 py-5 sm:border-b-0 sm:border-l sm:px-6"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-secondary text-primary"><Icon name={x[0]} size={20}/></span><div><b className="block text-sm">{x[1]}</b><span className="text-xs text-muted">{x[2]}</span></div></div>)}</div></section>
-    <section id="products" className="mx-auto max-w-7xl px-5 py-16 sm:px-8 lg:px-12"><div className="mb-7 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="mb-2 text-sm font-bold tracking-widest text-accent">المتجر</p><h2 className="text-3xl font-black sm:text-4xl">منتجات البيت الأبيض</h2></div><div className="flex flex-col gap-3 sm:flex-row"><div className="relative"><Icon name="Search" size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="ابحث عن منتج..." className="w-full rounded-full border border-border bg-white py-3 pr-10 pl-4 outline-none focus:border-primary sm:w-64"/></div><button onClick={()=>setShowAll(!showAll)} className="rounded-full border border-primary/20 bg-white px-5 py-3 text-sm font-bold text-primary">{showAll?'عرض منتجات الجملة':'عرض كل المنتجات'}</button></div></div><div className="mb-7 flex gap-2 overflow-x-auto pb-1">{categories.map(c=><button key={c} onClick={()=>setCat(c)} className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-bold ${cat===c?'bg-primary text-white':'bg-white text-muted border border-border'}`}>{c}</button>)}</div><div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">{filtered.map(p=><ProductCard key={p.id} product={p} onAdd={add} onFavorite={toggleFav} favorite={favorites.includes(p.id)}/>)}</div>{!filtered.length&&<div className="rounded-3xl bg-white p-12 text-center text-muted">لا توجد منتجات مطابقة للبحث.</div>}</section>
-    <section id="favorites" className="mx-auto max-w-7xl px-5 pb-16 sm:px-8 lg:px-12"><div className="rounded-3xl bg-primary p-7 text-white"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center"><div><h2 className="text-2xl font-black">المفضلة والطلبات</h2><p className="mt-2 text-sm text-white/70">احفظ منتجاتك المفضلة وراجع الطلبات التي تم حفظها على هذا الجهاز.</p></div><div className="flex gap-2"><button onClick={()=>setShowOrders(true)} className="rounded-full bg-white px-5 py-3 text-sm font-bold text-primary">طلباتي ({db.orders.length})</button><button onClick={()=>setOpenCart(true)} className="rounded-full bg-accent px-5 py-3 text-sm font-bold text-foreground">فتح السلة ({count})</button></div></div></div></section>
-    <section id="contact" className="border-t border-border bg-white px-5 py-12"><div className="mx-auto grid max-w-7xl gap-6 md:grid-cols-3"><div><h2 className="text-xl font-black text-primary">البيت الأبيض للألبان</h2><p className="mt-2 text-sm text-muted">نحفظ طعم البيت، ونوصله إليك.</p></div><div><b>خدمة العملاء</b><a href="tel:0956824459" className="mt-2 block text-primary font-bold">0956824459</a><a href="https://wa.me/963956824459" target="_blank" rel="noreferrer" className="mt-2 block text-primary font-bold">واتساب</a></div><div><b>الخدمة</b><p className="mt-2 text-sm text-muted">توصيل مجاني ضمن دمشق وريفها · المبيع بسعر الجملة</p><button onClick={()=>onNavigate('complaints')} className="mt-3 text-sm font-bold text-primary">الشكاوى والملاحظات</button></div></div></section>
-    <CartDrawer open={openCart} onClose={()=>setOpenCart(false)} items={cart} products={products} onAdd={add} onQty={qty} onRemove={remove} onClear={()=>setCart([])} onOrder={order}/><OrderHistory orders={db.orders} onClose={()=>setShowOrders(false)}/>{showOrders&&null}<Toast message={toast} onClose={()=>setToast('')}/>
-    {showOrders&&<OrderHistory orders={db.orders} onClose={()=>setShowOrders(false)}/>} 
-  </main>;
-};
-
-const ComplaintsPage=({onNavigate})=>{const [name,setName]=useState('');const [phone,setPhone]=useState('');const [text,setText]=useState('');const [done,setDone]=useState(false);const send=e=>{e.preventDefault();if(!text.trim())return;const db=loadStore();const complaint={id:uid('complaint'),name,phone,text,createdAt:new Date().toISOString(),status:'جديدة'};
-db.complaints.push(complaint);saveStore(db);
-fetch('/api/complaints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(complaint)}).catch(()=>{});
-setDone(true);setName('');setPhone('');setText('')};return <main className="min-h-screen bg-background p-5"><div className="mx-auto max-w-2xl py-10"><button onClick={()=>onNavigate('shop')} className="mb-6 font-bold text-primary">← العودة للمتجر</button><div className="rounded-3xl bg-white p-7 shadow-xl border border-border"><h1 className="text-3xl font-black">الشكاوى والملاحظات</h1><p className="mt-2 text-muted">أرسل ملاحظتك وسيتم حفظها في لوحة الإدارة.</p>{done&&<div className="mt-5 rounded-xl bg-secondary p-4 font-bold text-primary">تم تسجيل ملاحظتك بنجاح ✓</div>}<form onSubmit={send} className="mt-6 space-y-4"><input value={name} onChange={e=>setName(e.target.value)} placeholder="الاسم" className="w-full rounded-xl border border-border p-3"/><input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="رقم الهاتف" className="w-full rounded-xl border border-border p-3"/><textarea required value={text} onChange={e=>setText(e.target.value)} rows="6" placeholder="اكتب الشكوى أو الملاحظة..." className="w-full rounded-xl border border-border p-3"/><button className="w-full rounded-xl bg-primary py-4 font-bold text-white">إرسال</button></form></div></div></main>};
-
-const AdminDashboard=({onNavigate})=>{const [logged,setLogged]=useState(()=>sessionStorage.getItem('white_admin')==='1');const [form,setForm]=useState({u:'',p:''});const [db,setDb]=useState(loadStore);const [q,setQ]=useState('');const [status,setStatus]=useState('الكل');const [tab,setTab]=useState('orders');const [msg,setMsg]=useState('');useEffect(()=>saveStore(db),[db]);const login=async e=>{
-    e.preventDefault();
-    try{
-      const r=await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:form.u,password:form.p})});
-      const x=await r.json();
-      if(!r.ok) throw new Error(x.error||'بيانات الدخول غير صحيحة');
-      sessionStorage.setItem('white_admin','1');
-      sessionStorage.setItem('white_admin_token',x.token);
-      setLogged(true);
-      const s=await fetch('/api/admin/state',{headers:{Authorization:'Bearer '+x.token}});
-      if(s.ok){const state=await s.json();setDb(state);}
-    }catch(err){alert(err.message||'تعذر الاتصال بالخادم');}
-  };if(!logged)return <main className="min-h-screen bg-background flex items-center justify-center p-5"><form onSubmit={login} className="w-full max-w-md rounded-3xl bg-white p-7 shadow-xl border border-border"><div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-2xl text-white">ب</div><h1 className="text-2xl font-black text-center">لوحة الإدارة</h1><input value={form.u} onChange={e=>setForm({...form,u:e.target.value})} placeholder="اسم المستخدم" className="mt-6 w-full rounded-xl border border-border p-3"/><input type="password" value={form.p} onChange={e=>setForm({...form,p:e.target.value})} placeholder="كلمة المرور" className="mt-3 w-full rounded-xl border border-border p-3"/><button className="mt-4 w-full rounded-xl bg-primary py-4 font-bold text-white">دخول</button><p className="mt-4 text-center text-xs text-muted">بيانات الدخول تُحدد من ملف البيئة في الخادم.</p></form></main>;
-  const orders=db.orders.filter(o=>(status==='الكل'||o.status===status)&&(o.id+' '+o.customer+' '+o.phone+' '+o.products).includes(q));const revenue=db.orders.reduce((s,o)=>s+o.total,0);const setOrderStatus=(id,s)=>setDb(x=>({...x,orders:x.orders.map(o=>o.id===id?{...o,status:s}:o)}));const editProduct=(id,key,val)=>setDb(x=>({...x,products:x.products.map(p=>p.id===id?{...p,[key]:key==='price'||key==='stock'?Number(val):val}:p)}));
-  return <main className="min-h-screen bg-background"><header className="sticky top-0 z-50 border-b border-border bg-white/95 px-5 py-4"><div className="mx-auto flex max-w-7xl items-center justify-between"><div><b className="text-primary">البيت الأبيض للألبان</b><p className="text-xs text-muted">لوحة الإدارة</p></div><div className="flex gap-2"><button onClick={()=>onNavigate('shop')} className="rounded-xl border border-border px-4 py-2 text-sm font-bold">المتجر</button><button onClick={()=>{sessionStorage.removeItem('white_admin');sessionStorage.removeItem('white_admin_token');setLogged(false)}} className="rounded-xl border border-[#8A3E35]/30 px-4 py-2 text-sm font-bold text-[#8A3E35]">خروج</button></div></div></header><div className="mx-auto max-w-7xl p-5 sm:p-8">
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><div className="rounded-2xl bg-primary p-5 text-white"><span>إجمالي الطلبات</span><b className="mt-3 block text-3xl">{db.orders.length}</b></div><div className="rounded-2xl bg-white p-5 border border-border"><span>إجمالي المبيعات</span><b className="mt-3 block text-3xl">{money(revenue)} <small>ل.س</small></b></div><div className="rounded-2xl bg-white p-5 border border-border"><span>قيد التجهيز</span><b className="mt-3 block text-3xl">{db.orders.filter(o=>o.status==='قيد التجهيز').length}</b></div><div className="rounded-2xl bg-white p-5 border border-border"><span>العملاء</span><b className="mt-3 block text-3xl">{db.customers.length}</b></div></div>
-    <div className="mt-7 flex flex-wrap gap-2">{[['orders','الطلبات'],['products','المنتجات'],['customers','العملاء'],['complaints','الشكاوى']].map(t=><button key={t[0]} onClick={()=>setTab(t[0])} className={`rounded-full px-5 py-3 text-sm font-bold ${tab===t[0]?'bg-primary text-white':'bg-white border border-border'}`}>{t[1]}</button>)}</div>
-    {tab==='orders'&&<section className="mt-5 rounded-3xl bg-white border border-border p-5"><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><h2 className="text-xl font-black">إدارة الطلبات</h2><div className="flex gap-2"><input value={q} onChange={e=>setQ(e.target.value)} placeholder="بحث بالطلب أو العميل..." className="rounded-xl border border-border p-3"/><select value={status} onChange={e=>setStatus(e.target.value)} className="rounded-xl border border-border p-3"><option>الكل</option><option>جديد</option><option>قيد التجهيز</option><option>تم التسليم</option><option>ملغي</option></select></div></div><div className="mt-5 space-y-3">{orders.slice().reverse().map(o=><article key={o.id} className="rounded-2xl border border-border p-4"><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div><b className="text-primary">{o.id}</b><h3 className="mt-1 font-black">{o.customer} · {o.phone}</h3><p className="mt-1 text-sm text-muted">{o.products}</p><p className="mt-1 text-xs text-muted">{o.address}</p></div><div className="text-left"><b className="block text-lg">{money(o.total)} ل.س</b><select value={o.status} onChange={e=>setOrderStatus(o.id,e.target.value)} className="mt-2 rounded-xl border border-border p-2 text-sm"><option>جديد</option><option>قيد التجهيز</option><option>تم التسليم</option><option>ملغي</option></select></div></div></article>))}{!orders.length&&<p className="py-10 text-center text-muted">لا توجد طلبات.</p>}</div></section>}
-    {tab==='products'&&<section className="mt-5 rounded-3xl bg-white border border-border p-5"><h2 className="text-xl font-black">إدارة المنتجات والأسعار والمخزون</h2><div className="mt-5 grid gap-4 md:grid-cols-2">{db.products.map(p=><article key={p.id} className="rounded-2xl border border-border p-4"><div className="flex gap-3"><img src={p.image} className="h-20 w-20 rounded-xl object-cover"/><div className="flex-1"><b>{p.name}</b><div className="mt-3 grid grid-cols-2 gap-2"><label className="text-xs text-muted">السعر<input type="number" value={p.price} onChange={e=>editProduct(p.id,'price',e.target.value)} className="mt-1 w-full rounded-lg border border-border p-2"/></label><label className="text-xs text-muted">المخزون<input type="number" value={p.stock} onChange={e=>editProduct(p.id,'stock',e.target.value)} className="mt-1 w-full rounded-lg border border-border p-2"/></label></div></div></div></article>)}</div></section>}
-    {tab==='customers'&&<section className="mt-5 rounded-3xl bg-white border border-border p-5"><h2 className="text-xl font-black">العملاء</h2><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[650px] text-right"><thead><tr className="border-b border-border text-sm text-muted"><th className="p-3">الاسم</th><th className="p-3">الهاتف</th><th className="p-3">العنوان</th><th className="p-3">آخر طلب</th></tr></thead><tbody>{db.customers.map(c=><tr key={c.id} className="border-b border-border"><td className="p-3 font-bold">{c.name}</td><td className="p-3">{c.phone}</td><td className="p-3">{c.address}</td><td className="p-3 text-xs">{c.lastOrderAt?new Date(c.lastOrderAt).toLocaleString('ar-SY'):''}</td></tr>)}</tbody></table></div></section>}
-    {tab==='complaints'&&<section className="mt-5 rounded-3xl bg-white border border-border p-5"><h2 className="text-xl font-black">الشكاوى والملاحظات</h2><div className="mt-5 space-y-3">{db.complaints.slice().reverse().map(c=><article key={c.id} className="rounded-2xl border border-border p-4"><div className="flex justify-between"><b>{c.name||'بدون اسم'}</b><span className="text-xs text-muted">{new Date(c.createdAt).toLocaleString('ar-SY')}</span></div><p className="mt-2 text-sm">{c.text}</p><p className="mt-2 text-xs text-muted">{c.phone}</p></article>))}{!db.complaints.length&&<p className="py-10 text-center text-muted">لا توجد شكاوى.</p>}</div></section>}
-  </div></main>;
-};
-
-function App(){const [page,setPage]=useState('shop');const nav=p=>{setPage(p);window.scrollTo(0,0)};if(page==='admin')return <AdminDashboard onNavigate={nav}/>;if(page==='complaints')return <ComplaintsPage onNavigate={nav}/>;return <CustomerShop onNavigate={nav}/>}
-const root=ReactDOM.createRoot(document.getElementById('root'));root.render(<App/>);
-
-</script>
-
-
-<!-- مساعد الذكاء الاصطناعي: يعمل عبر الخادم /api/ai ولا يضع مفتاح OpenAI في المتصفح -->
-<style>
-#ai-launch{position:fixed;left:20px;bottom:20px;z-index:500;border:0;border-radius:999px;padding:14px 18px;background:#263b22;color:#fff;font-weight:800;box-shadow:0 10px 30px #0002;cursor:pointer}
-#ai-box{position:fixed;left:20px;bottom:82px;width:min(390px,calc(100vw - 40px));height:560px;z-index:500;background:#fff;border:1px solid #ddd;border-radius:24px;box-shadow:0 20px 60px #0003;display:none;overflow:hidden;font-family:Tajawal,Arial,sans-serif}
-#ai-head{background:#263b22;color:#fff;padding:16px;display:flex;justify-content:space-between;align-items:center}
-#ai-msgs{height:430px;overflow:auto;padding:14px;background:#f7f8f5}
-.ai-m{max-width:86%;padding:10px 12px;border-radius:16px;margin:8px 0;line-height:1.7;font-size:14px;white-space:pre-wrap}
-.ai-user{margin-right:auto;background:#e5ecdF}.ai-bot{margin-left:auto;background:#263b22;color:#fff}
-#ai-form{display:flex;gap:8px;padding:10px;border-top:1px solid #eee}
-#ai-input{flex:1;border:1px solid #ddd;border-radius:14px;padding:10px;outline:none}
-#ai-send{border:0;border-radius:14px;background:#263b22;color:#fff;padding:0 16px;font-weight:800}
-</style>
-<button id="ai-launch" type="button">🤖 مساعد المتجر</button>
-<div id="ai-box" dir="rtl">
-  <div id="ai-head"><b>مساعد البيت الأبيض</b><button id="ai-close" type="button" style="background:none;border:0;color:#fff;font-size:22px">×</button></div>
-  <div id="ai-msgs"><div class="ai-m ai-bot">مرحباً! اسألني عن المنتجات، الأسعار، الطلبات أو كيفية استخدام المتجر.</div></div>
-  <form id="ai-form"><input id="ai-input" placeholder="اكتب سؤالك..." autocomplete="off"><button id="ai-send">إرسال</button></form>
-</div>
-<script>
-(()=> {
- const launch=document.getElementById('ai-launch'), box=document.getElementById('ai-box'), close=document.getElementById('ai-close');
- const form=document.getElementById('ai-form'), input=document.getElementById('ai-input'), msgs=document.getElementById('ai-msgs');
- const add=(t,c)=>{const d=document.createElement('div');d.className='ai-m '+c;d.textContent=t;msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;return d};
- launch.onclick=()=>{box.style.display='block';input.focus()};
- close.onclick=()=>box.style.display='none';
- form.onsubmit=async e=>{
-   e.preventDefault(); const q=input.value.trim(); if(!q)return; input.value=''; add(q,'ai-user'); const wait=add('جاري التفكير...','ai-bot');
-   try{
-     const r=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:q})});
-     const x=await r.json(); if(!r.ok) throw new Error(x.error||'حدث خطأ');
-     wait.textContent=x.output_text||'لم يصل رد.';
-   }catch(err){wait.textContent='تعذر الاتصال بمساعد الذكاء الاصطناعي. تأكد أن الخادم يعمل.';}
- };
-})();
+/* ============ Mount ============ */
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
 </script>
 
 </body>
